@@ -1,0 +1,8 @@
+# Swift / Xcode / Swift Playgrounds build artifacts
+.build/
+.swiftpm/xcode/
+.swiftpm/configuration/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.DS_Store
