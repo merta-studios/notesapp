@@ -10,6 +10,7 @@ import UIKit
 
 /// Turns imported media (images / PDFs) into notebook pages by saving each as a
 /// page background asset. Returns the created pages.
+@MainActor
 enum PageImporter {
     static func pages(fromImages images: [UIImage]) -> [NotePage] {
         images.compactMap { image in
@@ -54,7 +55,7 @@ enum PageImporter {
 // MARK: - Photos picker
 
 struct PhotoImportPicker: UIViewControllerRepresentable {
-    var onComplete: ([UIImage]) -> Void
+    var onComplete: @MainActor ([UIImage]) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(onComplete: onComplete) }
 
@@ -70,8 +71,8 @@ struct PhotoImportPicker: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: PHPickerViewController, context: Context) {}
 
     final class Coordinator: NSObject, PHPickerViewControllerDelegate {
-        let onComplete: ([UIImage]) -> Void
-        init(onComplete: @escaping ([UIImage]) -> Void) { self.onComplete = onComplete }
+        let onComplete: @MainActor ([UIImage]) -> Void
+        init(onComplete: @escaping @MainActor ([UIImage]) -> Void) { self.onComplete = onComplete }
 
         func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
             picker.dismiss(animated: true)
@@ -85,7 +86,11 @@ struct PhotoImportPicker: UIViewControllerRepresentable {
                     group.leave()
                 }
             }
-            group.notify(queue: .main) { self.onComplete(images) }
+            group.notify(queue: .main) {
+                MainActor.assumeIsolated {
+                    self.onComplete(images)
+                }
+            }
         }
     }
 }
@@ -93,7 +98,7 @@ struct PhotoImportPicker: UIViewControllerRepresentable {
 // MARK: - Files picker (PDF + images)
 
 struct FileImportPicker: UIViewControllerRepresentable {
-    var onComplete: ([NotePage]) -> Void
+    var onComplete: @MainActor ([NotePage]) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(onComplete: onComplete) }
 
@@ -107,23 +112,29 @@ struct FileImportPicker: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
 
     final class Coordinator: NSObject, UIDocumentPickerDelegate {
-        let onComplete: ([NotePage]) -> Void
-        init(onComplete: @escaping ([NotePage]) -> Void) { self.onComplete = onComplete }
+        let onComplete: @MainActor ([NotePage]) -> Void
+        init(onComplete: @escaping @MainActor ([NotePage]) -> Void) { self.onComplete = onComplete }
 
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            var pages: [NotePage] = []
-            for url in urls {
-                if url.pathExtension.lowercased() == "pdf" {
-                    pages.append(contentsOf: PageImporter.pages(fromPDF: url))
-                } else if let data = try? Data(contentsOf: url), let img = UIImage(data: data) {
-                    pages.append(contentsOf: PageImporter.pages(fromImages: [img]))
+            let completion = onComplete
+            DispatchQueue.main.async {
+                var pages: [NotePage] = []
+                for url in urls {
+                    if url.pathExtension.lowercased() == "pdf" {
+                        pages.append(contentsOf: PageImporter.pages(fromPDF: url))
+                    } else if let data = try? Data(contentsOf: url), let img = UIImage(data: data) {
+                        pages.append(contentsOf: PageImporter.pages(fromImages: [img]))
+                    }
                 }
+                completion(pages)
             }
-            onComplete(pages)
         }
 
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-            onComplete([])
+            let completion = onComplete
+            DispatchQueue.main.async {
+                completion([])
+            }
         }
     }
 }
@@ -131,7 +142,7 @@ struct FileImportPicker: UIViewControllerRepresentable {
 // MARK: - Camera
 
 struct CameraPicker: UIViewControllerRepresentable {
-    var onComplete: ([UIImage]) -> Void
+    var onComplete: @MainActor ([UIImage]) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(onComplete: onComplete) }
 
@@ -144,16 +155,28 @@ struct CameraPicker: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
 
     final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let onComplete: ([UIImage]) -> Void
-        init(onComplete: @escaping ([UIImage]) -> Void) { self.onComplete = onComplete }
+        let onComplete: @MainActor ([UIImage]) -> Void
+        init(onComplete: @escaping @MainActor ([UIImage]) -> Void) { self.onComplete = onComplete }
 
         func imagePickerController(_ picker: UIImagePickerController,
                                    didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
             picker.dismiss(animated: true)
-            if let img = info[.originalImage] as? UIImage { onComplete([img]) } else { onComplete([]) }
+            if let image = info[.originalImage] as? UIImage {
+                complete(with: [image])
+            } else {
+                complete(with: [])
+            }
         }
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            picker.dismiss(animated: true); onComplete([])
+            picker.dismiss(animated: true)
+            complete(with: [])
+        }
+
+        private func complete(with images: [UIImage]) {
+            let completion = onComplete
+            DispatchQueue.main.async {
+                completion(images)
+            }
         }
     }
 }
@@ -161,7 +184,7 @@ struct CameraPicker: UIViewControllerRepresentable {
 // MARK: - Document scanner (VisionKit)
 
 struct DocumentScanner: UIViewControllerRepresentable {
-    var onComplete: ([UIImage]) -> Void
+    var onComplete: @MainActor ([UIImage]) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(onComplete: onComplete) }
 
@@ -173,21 +196,30 @@ struct DocumentScanner: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: VNDocumentCameraViewController, context: Context) {}
 
     final class Coordinator: NSObject, VNDocumentCameraViewControllerDelegate {
-        let onComplete: ([UIImage]) -> Void
-        init(onComplete: @escaping ([UIImage]) -> Void) { self.onComplete = onComplete }
+        let onComplete: @MainActor ([UIImage]) -> Void
+        init(onComplete: @escaping @MainActor ([UIImage]) -> Void) { self.onComplete = onComplete }
 
         func documentCameraViewController(_ controller: VNDocumentCameraViewController,
                                           didFinishWith scan: VNDocumentCameraScan) {
             var images: [UIImage] = []
             for i in 0..<scan.pageCount { images.append(scan.imageOfPage(at: i)) }
             controller.dismiss(animated: true)
-            onComplete(images)
+            complete(with: images)
         }
         func documentCameraViewControllerDidCancel(_ controller: VNDocumentCameraViewController) {
-            controller.dismiss(animated: true); onComplete([])
+            controller.dismiss(animated: true)
+            complete(with: [])
         }
         func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFailWithError error: Error) {
-            controller.dismiss(animated: true); onComplete([])
+            controller.dismiss(animated: true)
+            complete(with: [])
+        }
+
+        private func complete(with images: [UIImage]) {
+            let completion = onComplete
+            DispatchQueue.main.async {
+                completion(images)
+            }
         }
     }
 }

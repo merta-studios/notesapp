@@ -6,6 +6,7 @@ import UIKit
 #endif
 
 /// Renders pages to images / PDF for export and sharing.
+@MainActor
 enum Exporter {
     /// Compose a full page image: paper background + imported image + drawing.
     static func renderPageImage(item: NoteItem, page: NotePage, scale: CGFloat = 2.0) -> UIImage {
